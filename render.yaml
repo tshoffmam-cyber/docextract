@@ -1,9 +1,9 @@
 services:
   - type: web
     name: docextract-api
-    runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    buildCommand: ""
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
@@ -44,9 +44,9 @@ services:
 
   - type: worker
     name: docextract-worker
-    runtime: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    buildCommand: ""
     startCommand: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
     envVars:
       - key: ANTHROPIC_API_KEY
