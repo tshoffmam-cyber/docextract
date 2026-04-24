@@ -3,8 +3,10 @@ services:
     name: docextract-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port 8000
     envVars:
+      - key: GEMINI_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: DATABASE_URL
@@ -47,6 +49,8 @@ services:
     dockerfilePath: ./Dockerfile
     startCommand: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
     envVars:
+      - key: GEMINI_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: DATABASE_URL

@@ -1,21 +1,41 @@
+import base64
 import json
 import logging
 import re
 
 import anthropic
+import google.generativeai as genai
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+_anthropic_client = None
+_gemini_model = None
 
-STATUS_VALUES = ("Apresentado", "Não apresentado", "Não consta", "Inconsistente")
+
+def _get_anthropic():
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    return _anthropic_client
+
+
+def _get_gemini():
+    global _gemini_model
+    if _gemini_model is None:
+        genai.configure(api_key=settings.gemini_api_key)
+        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+    return _gemini_model
 
 
 def _build_prompt(fields: list[str], contrato: dict, batch_num: int, total_batches: int) -> str:
     fields_list = ", ".join(fields) if fields else "todos os campos disponíveis"
-    contrato_info = f"Contrato: {contrato.get('name', '')}, Cliente: {contrato.get('client', '')}, Edital: {contrato.get('edital', '')}" if contrato else ""
+    contrato_info = (
+        f"Contrato: {contrato.get('name', '')}, "
+        f"Cliente: {contrato.get('client', '')}, "
+        f"Edital: {contrato.get('edital', '')}"
+    ) if contrato else ""
     return f"""Você é um auditor especialista em documentação trabalhista brasileira.
 {contrato_info}
 Lote {batch_num}/{total_batches}. Analise as imagens e extraia dados de TODOS os funcionários visíveis.
@@ -56,6 +76,55 @@ def _parse_response(text: str) -> dict:
     return json.loads(text)
 
 
+def _call_gemini(batch_b64: list[str], prompt: str) -> dict:
+    import PIL.Image
+    from io import BytesIO
+
+    model = _get_gemini()
+    parts = []
+    for b64 in batch_b64:
+        img = PIL.Image.open(BytesIO(base64.b64decode(b64)))
+        parts.append(img)
+    parts.append(prompt)
+
+    response = model.generate_content(parts)
+    return _parse_response(response.text)
+
+
+def _call_anthropic(batch_b64: list[str], prompt: str) -> dict:
+    content = []
+    for b64 in batch_b64:
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
+        })
+    content.append({"type": "text", "text": prompt})
+
+    response = _get_anthropic().messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": content}],
+    )
+    return _parse_response(response.content[0].text)
+
+
+def _call_with_fallback(batch_b64: list[str], prompt: str, batch_idx: int) -> dict:
+    if settings.gemini_api_key:
+        try:
+            result = _call_gemini(batch_b64, prompt)
+            logger.info("Batch %d: Gemini OK", batch_idx)
+            return result
+        except Exception as e:
+            logger.warning("Batch %d: Gemini falhou (%s), usando Anthropic", batch_idx, e)
+
+    if settings.anthropic_api_key:
+        result = _call_anthropic(batch_b64, prompt)
+        logger.info("Batch %d: Anthropic OK", batch_idx)
+        return result
+
+    raise RuntimeError("Nenhuma chave de IA configurada (GEMINI_API_KEY ou ANTHROPIC_API_KEY)")
+
+
 def deduplicate_employees(employees: list[dict]) -> list[dict]:
     merged: dict[str, dict] = {}
     for emp in employees:
@@ -65,18 +134,13 @@ def deduplicate_employees(employees: list[dict]) -> list[dict]:
         if key not in merged:
             merged[key] = emp
         else:
-            existing = merged[key]
-            existing_campos = existing.get("campos", {})
+            existing_campos = merged[key].get("campos", {})
             for campo, data in emp.get("campos", {}).items():
                 if campo not in existing_campos:
                     existing_campos[campo] = data
-                else:
-                    current_status = existing_campos[campo].get("status", "")
-                    new_status = data.get("status", "")
-                    # Prefer more informative statuses over "Não consta"
-                    if current_status == "Não consta" and new_status != "Não consta":
-                        existing_campos[campo] = data
-            existing["campos"] = existing_campos
+                elif existing_campos[campo].get("status") == "Não consta" and data.get("status") != "Não consta":
+                    existing_campos[campo] = data
+            merged[key]["campos"] = existing_campos
     return list(merged.values())
 
 
@@ -93,21 +157,9 @@ def extract_from_pages(pages_b64: list[str], fields: list[str], contrato: dict) 
     resumos: list[str] = []
 
     for idx, batch in enumerate(batches, start=1):
-        content: list[dict] = []
-        for b64 in batch:
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
-            })
-        content.append({"type": "text", "text": _build_prompt(fields, contrato, idx, total_batches)})
-
+        prompt = _build_prompt(fields, contrato, idx, total_batches)
         try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": content}],
-            )
-            parsed = _parse_response(response.content[0].text)
+            parsed = _call_with_fallback(batch, prompt, idx)
             all_employees.extend(parsed.get("funcionarios", []))
             all_inconsistencies.extend(parsed.get("inconsistencias", []))
             if not tipo_documento:
@@ -119,7 +171,7 @@ def extract_from_pages(pages_b64: list[str], fields: list[str], contrato: dict) 
             if parsed.get("resumo"):
                 resumos.append(parsed["resumo"])
         except Exception as e:
-            logger.error("Batch %d/%d extraction failed: %s", idx, total_batches, e)
+            logger.error("Batch %d/%d falhou: %s", idx, total_batches, e)
             continue
 
     deduped = deduplicate_employees(all_employees)
