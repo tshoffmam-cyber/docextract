@@ -8,13 +8,14 @@ class Settings(BaseSettings):
 
     gemini_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
-    redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/docextract"
 
-    r2_account_id: str = ""
-    r2_access_key_id: str = ""
-    r2_secret_access_key: str = ""
-    r2_bucket_name: str = "docextract-pdfs"
+    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/docextract"
+    redis_url: str = "redis://localhost:6379/0"
+
+    cloudflare_account_id: Optional[str] = None
+    cloudflare_r2_bucket: Optional[str] = None
+    cloudflare_r2_access_key: Optional[str] = None
+    cloudflare_r2_secret_key: Optional[str] = None
     r2_public_url: str = ""
 
     google_client_id: str = ""
