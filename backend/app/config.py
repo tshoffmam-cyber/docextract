@@ -1,18 +1,21 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    gemini_api_key: str = ""
-    anthropic_api_key: str = ""
-    redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/docextract"
+    gemini_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
 
-    r2_account_id: str = ""
-    r2_access_key_id: str = ""
-    r2_secret_access_key: str = ""
-    r2_bucket_name: str = "docextract-pdfs"
+    database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/docextract"
+    redis_url: str = "redis://localhost:6379/0"
+
+    cloudflare_account_id: Optional[str] = None
+    cloudflare_r2_bucket: Optional[str] = None
+    cloudflare_r2_access_key: Optional[str] = None
+    cloudflare_r2_secret_key: Optional[str] = None
     r2_public_url: str = ""
 
     google_client_id: str = ""

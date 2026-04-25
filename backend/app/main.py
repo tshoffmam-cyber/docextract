@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,9 +9,21 @@ from app.config import settings
 from app.database import engine
 from app.api.routes import auth, jobs, upload
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("DocExtract iniciando — PORT=%s DATABASE=%s",
+                os.environ.get("PORT", "8000"),
+                settings.database_url.split("@")[-1] if "@" in settings.database_url else "default")
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        logger.info("Banco de dados: conexão OK")
+    except Exception as e:
+        logger.error("Banco de dados: falha na conexão — %s", e)
     yield
     await engine.dispose()
 

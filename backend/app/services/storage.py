@@ -11,9 +11,9 @@ def _get_client():
     if _client is None:
         _client = boto3.client(
             "s3",
-            endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
-            aws_access_key_id=settings.r2_access_key_id,
-            aws_secret_access_key=settings.r2_secret_access_key,
+            endpoint_url=f"https://{settings.cloudflare_account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=settings.cloudflare_r2_access_key,
+            aws_secret_access_key=settings.cloudflare_r2_secret_key,
             region_name="auto",
         )
     return _client
@@ -21,7 +21,7 @@ def _get_client():
 
 def upload_file(key: str, data: bytes, content_type: str) -> str:
     _get_client().put_object(
-        Bucket=settings.r2_bucket_name,
+        Bucket=settings.cloudflare_r2_bucket,
         Key=key,
         Body=data,
         ContentType=content_type,
@@ -30,13 +30,13 @@ def upload_file(key: str, data: bytes, content_type: str) -> str:
 
 
 def download_file(key: str) -> bytes:
-    response = _get_client().get_object(Bucket=settings.r2_bucket_name, Key=key)
+    response = _get_client().get_object(Bucket=settings.cloudflare_r2_bucket, Key=key)
     return response["Body"].read()
 
 
 def delete_file(key: str) -> bool:
     try:
-        _get_client().delete_object(Bucket=settings.r2_bucket_name, Key=key)
+        _get_client().delete_object(Bucket=settings.cloudflare_r2_bucket, Key=key)
         return True
     except ClientError:
         return False
@@ -45,6 +45,6 @@ def delete_file(key: str) -> bool:
 def generate_presigned_url(key: str, expires: int = 3600) -> str:
     return _get_client().generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.r2_bucket_name, "Key": key},
+        Params={"Bucket": settings.cloudflare_r2_bucket, "Key": key},
         ExpiresIn=expires,
     )
