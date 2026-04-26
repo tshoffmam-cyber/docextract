@@ -216,6 +216,7 @@ cd backend
 pip install -r requirements.txt
 pytest tests/ -v
 ```
+<!-- deploy: trigger vercel production from main -->
 
 Os testes não precisam de banco nem de credenciais reais — toda I/O externa é mockada.
 
