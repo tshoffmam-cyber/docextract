@@ -2,12 +2,13 @@
   "name": "docextract",
   "version": "1.0.0",
   "private": true,
-  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "build": "cd frontend && npm install && npm run build",
+    "start": "node server.js",
+    "install-python": "pip install -r backend/requirements.txt"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "http-proxy-middleware": "^3.0.2"
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^3.0.0"
   }
 }
