@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { auth, jobs } from "./api/client";
+import { useEffect, useState } from "react";
+import { auth } from "./api/client";
 import { useJobPolling } from "./hooks/useJobPolling";
+import UploadTab from "./components/UploadTab";
+import ResultsTab from "./components/ResultsTab";
+import ReportTab from "./components/ReportTab";
 
-/* ── Auth Screen ──────────────────────────────────────────── */
 function AuthScreen({ onLogin }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ email: "", name: "", password: "" });
@@ -48,49 +50,9 @@ function AuthScreen({ onLogin }) {
   );
 }
 
-/* ── Upload Tab ───────────────────────────────────────────── */
-function UploadTab({ onJobStarted }) {
-  const fileRef = useRef();
-  const [fields, setFields] = useState("{}");
-  const [contrato, setContrato] = useState("{}");
-  const [error, setError] = useState("");
-
-  const submit = async (e) => {
-    e.preventDefault();
-    setError("");
-    const file = fileRef.current?.files[0];
-    if (!file) return setError("Selecione um PDF.");
-
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("fields", fields);
-    fd.append("contrato", contrato);
-
-    try {
-      const { data } = await jobs.upload(fd);
-      onJobStarted(data.job_id);
-    } catch (err) {
-      setError(err.response?.data?.detail ?? "Erro ao enviar arquivo.");
-    }
-  };
-
-  return (
-    <form onSubmit={submit} className="space-y-4 p-4">
-      <input ref={fileRef} type="file" accept="application/pdf" className="block w-full" />
-      <textarea className="input font-mono text-xs" rows={3} placeholder='campos JSON ex: {"Holerite":"","FGTS":""}' value={fields}
-        onChange={(e) => setFields(e.target.value)} />
-      <textarea className="input font-mono text-xs" rows={3} placeholder='contrato JSON ex: {"name":"Contrato X","client":"CESAN","edital":"001/2024"}' value={contrato}
-        onChange={(e) => setContrato(e.target.value)} />
-      {error && <p className="text-red-500 text-sm">{error}</p>}
-      <button className="btn-primary" type="submit">Enviar PDF</button>
-    </form>
-  );
-}
-
-/* ── Progress Bar ─────────────────────────────────────────── */
 function ProgressBar({ progress, message }) {
   return (
-    <div className="p-4 space-y-2">
+    <div className="p-4 space-y-2 border-b">
       <p className="text-sm text-gray-600">{message}</p>
       <div className="w-full bg-gray-200 rounded-full h-3">
         <div className="bg-blue-600 h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
@@ -100,81 +62,6 @@ function ProgressBar({ progress, message }) {
   );
 }
 
-/* ── Results Tab ──────────────────────────────────────────── */
-function ResultsTab({ result }) {
-  if (!result) return <p className="p-4 text-gray-500">Nenhum resultado ainda.</p>;
-
-  return (
-    <div className="p-4 space-y-4 overflow-auto">
-      <div className="grid grid-cols-3 gap-2 text-sm">
-        <div><span className="font-semibold">Tipo:</span> {result.tipo_documento}</div>
-        <div><span className="font-semibold">Empresa:</span> {result.empresa}</div>
-        <div><span className="font-semibold">Competência:</span> {result.competencia}</div>
-      </div>
-      <p className="text-sm"><span className="font-semibold">Funcionários:</span> {result.total_funcionarios}</p>
-
-      {result.inconsistencias?.length > 0 && (
-        <div>
-          <h3 className="font-semibold text-red-600 mb-1">Inconsistências ({result.inconsistencias.length})</h3>
-          <ul className="text-sm space-y-1">
-            {result.inconsistencias.map((inc, i) => (
-              <li key={i} className="bg-red-50 rounded p-2">
-                <span className="font-medium">{inc.funcionario}</span> — {inc.campo}: {inc.descricao}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="bg-gray-100">
-            <th className="border px-2 py-1 text-left">Funcionário</th>
-            {result.funcionarios[0] && Object.keys(result.funcionarios[0].campos ?? {}).map((c) => (
-              <th key={c} className="border px-2 py-1">{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {result.funcionarios.map((f, i) => (
-            <tr key={i} className="odd:bg-white even:bg-gray-50">
-              <td className="border px-2 py-1 font-medium">{f.nome}</td>
-              {Object.values(f.campos ?? {}).map((v, j) => (
-                <td key={j} className={`border px-2 py-1 text-center ${v.status === "Inconsistente" ? "text-red-600" : v.status === "Não apresentado" ? "text-orange-500" : "text-green-600"}`}>
-                  {v.status}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/* ── Report Tab ───────────────────────────────────────────── */
-function ReportTab({ result }) {
-  if (!result?.report_text) return <p className="p-4 text-gray-500">Relatório não disponível.</p>;
-
-  const download = () => {
-    const blob = new Blob([result.report_text], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `relatorio-fato-${result.competencia ?? "sem-data"}.txt`;
-    a.click();
-  };
-
-  return (
-    <div className="p-4 space-y-3">
-      <button className="btn-primary text-sm" onClick={download}>Baixar relatório .txt</button>
-      <pre className="bg-gray-900 text-green-300 text-xs p-4 rounded overflow-auto max-h-[60vh] whitespace-pre-wrap">
-        {result.report_text}
-      </pre>
-    </div>
-  );
-}
-
-/* ── Main App ─────────────────────────────────────────────── */
 const TABS = ["Upload", "Resultado", "Relatório"];
 
 export default function App() {
@@ -206,16 +93,18 @@ export default function App() {
         <nav className="flex border-b">
           {TABS.map((t, i) => (
             <button key={t} onClick={() => setTab(i)}
-              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${tab === i ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                tab === i ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}>
               {t}
             </button>
           ))}
         </nav>
 
         {processing && <ProgressBar progress={progress} message={message} />}
-        {error && <p className="p-4 text-red-500 text-sm">{error}</p>}
+        {error && <p className="p-4 text-red-500 text-sm font-medium">{error}</p>}
 
-        {tab === 0 && <UploadTab onJobStarted={(id) => { setJobId(id); setTab(0); }} />}
+        {tab === 0 && <UploadTab onJobStarted={(id) => { setJobId(id); }} />}
         {tab === 1 && <ResultsTab result={result} />}
         {tab === 2 && <ReportTab result={result} />}
       </div>
