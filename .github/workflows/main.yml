@@ -80,6 +80,6 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/v1/auth/login -H "Content-Type: application/json" -d '{"email":"t@t.com","password":"x"}')
           echo "Auth status: $STATUS"
-          [ "$STATUS" != "404" ] && echo "ENDPOINT OK" || (echo "ENDPOINT MISSING" && exit 1)
+          [ "$STATUS" != "404" ] && echo "ENDPOINT OK" || (echo "ENDPOINT NAO ENCONTRADO" && exit 1)
       - name: List all routes
         run: curl -s http://localhost:8000/openapi.json | python3 -c "import sys,json; [print(p) for p in sorted(json.load(sys.stdin).get('paths',{}).keys())]"
