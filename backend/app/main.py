@@ -56,3 +56,13 @@ app.include_router(extract.router, prefix="/api/v1")
 @app.get("/health", tags=["health"])
 async def health():
     return {"status": "ok"}
+
+@app.get("/api/v1/config-check", tags=["health"])
+async def config_check():
+        return {
+                    "gemini_key": bool(settings.gemini_api_key),
+                    "anthropic_key": bool(settings.anthropic_api_key),
+                    "frontend_url": settings.frontend_url,
+                    "gemini_prefix": settings.gemini_api_key[:8] if settings.gemini_api_key else None,
+                    "anthropic_prefix": settings.anthropic_api_key[:10] if settings.anthropic_api_key else None,
+        }
