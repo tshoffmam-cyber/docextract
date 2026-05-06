@@ -7,7 +7,7 @@ export default function HistoryTab({ onSelectJob }) {
     const [error, setError] = useState("");
 
   useEffect(() => {
-        jobs.listJobs()
+                jobs.list()
           .then((r) => setList(r.data || []))
           .catch(() => setError("Falha ao carregar historico."))
           .finally(() => setLoading(false));
