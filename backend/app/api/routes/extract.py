@@ -44,7 +44,7 @@ async def extract_text(
         contrato={"empresa": body.empresa, "medicao": body.medicao, "periodo": body.periodo},
     )
     db.add(job)
-    await db.flush()
+    await db.commit()
 
     background_tasks.add_task(
         _process_text_job,
@@ -124,7 +124,7 @@ def _call_ai_sync(prompt: str) -> dict:
             import anthropic
             client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-5",
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
