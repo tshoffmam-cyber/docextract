@@ -1,11 +1,29 @@
 import { useRef, useState, useEffect } from "react";
+import * as pdfjsLib from "pdfjs-dist";
 import { jobs } from "../api/client";
 
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
 const LS_KEY = "docextract_form";
+const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB
 
 function formatSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function extractTextFromPDF(file, onProgress) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pageTexts = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pageTexts.push(content.items.map((item) => item.str).join(" "));
+    onProgress(Math.round((i / pdf.numPages) * 60)); // 0-60%
+  }
+  return pageTexts.join("\n\n--- Página seguinte ---\n\n");
 }
 
 export default function UploadTab({ onJobStarted }) {
@@ -17,6 +35,8 @@ export default function UploadTab({ onJobStarted }) {
   const [medicao, setMedicao] = useState("");
   const [periodo, setPeriodo] = useState("");
   const [loading, setLoading] = useState(false);
+  const [phase, setPhase] = useState(""); // "extracting" | "sending" | ""
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -39,6 +59,10 @@ export default function UploadTab({ onJobStarted }) {
       setError("Apenas arquivos PDF são aceitos.");
       return;
     }
+    if (f.size > MAX_FILE_BYTES) {
+      setError(`Arquivo muito grande (${formatSize(f.size)}). Máximo: 500 MB.`);
+      return;
+    }
     setFile(f);
     setError("");
   };
@@ -49,37 +73,52 @@ export default function UploadTab({ onJobStarted }) {
     handleFile(e.dataTransfer.files[0]);
   };
 
-  const buildPrompt = () => {
-    const parts = [];
-    if (empresa) parts.push(`Empresa/Contratada: ${empresa}`);
-    if (medicao) parts.push(`Medição: ${medicao}`);
-    if (periodo) parts.push(`Período: ${periodo}`);
-    const ctx = parts.length ? `Contexto: ${parts.join(", ")}.\n\n` : "";
-    return ctx + (prompt.trim() || "Extraia os dados do documento.");
-  };
-
   const submit = async (e) => {
     e.preventDefault();
     setError("");
     if (!file) return setError("Selecione um PDF.");
 
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("prompt", buildPrompt());
-
     setLoading(true);
+    setProgress(0);
+
     try {
-      const { data } = await jobs.upload(fd);
+      // Phase 1: extract text in browser
+      setPhase("extracting");
+      const text = await extractTextFromPDF(file, setProgress);
+
+      // Phase 2: send to backend
+      setPhase("sending");
+      setProgress(70);
+
+      const { data } = await jobs.extractText({
+        text,
+        prompt: prompt.trim() || "Extraia os dados do documento.",
+        empresa,
+        medicao,
+        periodo,
+      });
+
+      setProgress(100);
       onJobStarted(data.job_id);
     } catch (err) {
-      setError(err.response?.data?.detail ?? "Erro ao enviar arquivo.");
+      setError(err.response?.data?.detail ?? err.message ?? "Erro ao processar arquivo.");
     } finally {
       setLoading(false);
+      setPhase("");
+      setProgress(0);
     }
+  };
+
+  const phaseLabel = {
+    extracting: file && file.size > 20 * 1024 * 1024
+      ? "Extraindo texto do PDF grande, aguarde..."
+      : "Extraindo texto do PDF...",
+    sending: "Enviando para análise com IA...",
   };
 
   return (
     <form onSubmit={submit} className="p-6 space-y-5">
+      {/* Drop zone */}
       <div
         onClick={() => !loading && fileRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -109,12 +148,13 @@ export default function UploadTab({ onJobStarted }) {
           ) : (
             <div>
               <p className="font-medium">Clique ou arraste um PDF aqui</p>
-              <p className="text-xs text-gray-400">Apenas arquivos .pdf</p>
+              <p className="text-xs text-gray-400">Apenas .pdf — até 500 MB</p>
             </div>
           )}
         </div>
       </div>
 
+      {/* Context fields */}
       <div className="grid grid-cols-3 gap-3">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Empresa / Contratada</label>
@@ -133,6 +173,7 @@ export default function UploadTab({ onJobStarted }) {
         </div>
       </div>
 
+      {/* Instruction */}
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Instrução de extração</label>
         <textarea
@@ -143,6 +184,19 @@ export default function UploadTab({ onJobStarted }) {
           onChange={(e) => setPrompt(e.target.value)}
         />
       </div>
+
+      {/* Loading progress */}
+      {loading && phase && (
+        <div className="space-y-1">
+          <p className="text-sm text-blue-600">{phaseLabel[phase]}</p>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
 

@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -18,6 +19,8 @@ class JobStatus(BaseModel):
     total_pages: int
     created_at: datetime
     completed_at: datetime | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
 
     model_config = {"from_attributes": True}
 

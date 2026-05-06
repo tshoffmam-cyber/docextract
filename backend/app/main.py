@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine
 from app.api.routes import auth, jobs, upload
+from app.api.routes import extract
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,9 +16,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("DocExtract iniciando — PORT=%s DATABASE=%s",
-                os.environ.get("PORT", "8000"),
-                settings.database_url.split("@")[-1] if "@" in settings.database_url else "default")
+    logger.info(
+        "DocExtract iniciando — PORT=%s DATABASE=%s",
+        os.environ.get("PORT", "8000"),
+        settings.database_url.split("@")[-1] if "@" in settings.database_url else "default",
+    )
     try:
         async with engine.connect() as conn:
             await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
@@ -47,6 +50,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(upload.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
+app.include_router(extract.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])

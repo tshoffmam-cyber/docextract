@@ -4,6 +4,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
 const api = axios.create({
   baseURL: BASE_URL,
+  timeout: 300000,
 });
 
 api.interceptors.request.use((config) => {
@@ -17,7 +18,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("token");
-      window.location.href = "/login";
+      window.location.href = "/";
     }
     return Promise.reject(err);
   }
@@ -30,7 +31,9 @@ export const auth = {
 };
 
 export const jobs = {
-  upload: (formData) => api.post("/upload", formData),
+  upload: (formData, onProgress) =>
+    api.post("/upload", formData, { onUploadProgress: onProgress }),
+  extractText: (body) => api.post("/extract-text", body),
   status: (id) => api.get(`/jobs/${id}`),
   result: (id) => api.get(`/jobs/${id}/result`),
   list: () => api.get("/jobs"),

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 _STATUS_MESSAGES = {
     "queued": "Na fila...",
-    "processing": "Iniciando processamento...",
+    "processing": "Processando com IA...",
     "compressing": "Comprimindo páginas...",
     "extracting": "Extraindo dados com IA...",
     "done": "Concluído.",
@@ -32,7 +32,11 @@ async def list_jobs(current_user: CurrentUser, db: DB, page: int = 1, per_page: 
     offset = (page - 1) * per_page
     rows = (
         await db.execute(
-            select(Job).where(Job.user_id == current_user.id).order_by(Job.created_at.desc()).offset(offset).limit(per_page)
+            select(Job)
+            .where(Job.user_id == current_user.id)
+            .order_by(Job.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
         )
     ).scalars().all()
     return rows
@@ -44,7 +48,23 @@ async def get_job(job_id: uuid.UUID, current_user: CurrentUser, db: DB):
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job não encontrado")
     _check_owner(job, current_user.id)
-    return {**job.__dict__, "message": _STATUS_MESSAGES.get(job.status, job.status)}
+
+    result_data = None
+    error_msg = job.error_message if job.status == "error" else None
+
+    if job.status == "done":
+        result_row = (
+            await db.execute(select(Result).where(Result.job_id == job_id))
+        ).scalar_one_or_none()
+        if result_row:
+            result_data = ResultOut.model_validate(result_row).model_dump(mode="json")
+
+    return {
+        **job.__dict__,
+        "message": _STATUS_MESSAGES.get(job.status, job.status),
+        "result": result_data,
+        "error": error_msg,
+    }
 
 
 @router.get("/{job_id}/result", response_model=ResultOut)
@@ -54,7 +74,10 @@ async def get_result(job_id: uuid.UUID, current_user: CurrentUser, db: DB):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job não encontrado")
     _check_owner(job, current_user.id)
     if job.status != "done":
-        raise HTTPException(status_code=status.HTTP_425_TOO_EARLY, detail=f"Job ainda em processamento: {job.status}")
+        raise HTTPException(
+            status_code=status.HTTP_425_TOO_EARLY,
+            detail=f"Job ainda em processamento: {job.status}",
+        )
     result = (await db.execute(select(Result).where(Result.job_id == job_id))).scalar_one_or_none()
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resultado não encontrado")
@@ -67,5 +90,8 @@ async def delete_job(job_id: uuid.UUID, current_user: CurrentUser, db: DB):
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job não encontrado")
     _check_owner(job, current_user.id)
-    delete_file(job.pdf_key)
+    try:
+        delete_file(job.pdf_key)
+    except Exception:
+        pass
     await db.delete(job)
