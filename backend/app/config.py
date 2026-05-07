@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    gemini_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = "AIzaSyD3Wmn8i2h69yZ3pWkzBY-Oi1pgqYj9r_M"
     anthropic_api_key: Optional[str] = None
 
     database_url: str = "postgresql+asyncpg://user:pass@localhost:5432/docextract"
