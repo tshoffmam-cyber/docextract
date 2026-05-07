@@ -108,7 +108,7 @@ def _call_ai_sync(prompt: str) -> dict:
         try:
             import google.generativeai as genai
             genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-2.0-flash")
             response = model.generate_content(prompt)
             raw = response.text
             match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -124,7 +124,7 @@ def _call_ai_sync(prompt: str) -> dict:
             import anthropic
             client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
             response = client.messages.create(
-                model="claude-sonnet-4-5",
+                model="claude-sonnet-4-20250514",
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
             )
