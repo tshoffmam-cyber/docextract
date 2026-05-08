@@ -35,14 +35,14 @@ export default function HistoryTab({ onSelectJob }) {
   
     if (error) return (
           <div className="flex-1 flex items-center justify-center">
-                <p className="text-red-400">{error}</p>p>
-          </div>div>
+                <p className="text-red-400">{error}</p>
+          </div>
         );
   
     if (list.length === 0) return (
           <div className="flex-1 flex items-center justify-center">
-                <p className="text-gray-500">Nenhuma analise encontrada.</p>p>
-          </div>div>
+                <p className="text-gray-500">Nenhuma analise encontrada.</p>
+          </div>
         );
   
     return (
@@ -57,12 +57,12 @@ export default function HistoryTab({ onSelectJob }) {
                                   <div>
                                                 <p className="text-sm font-medium text-white">
                                                   {job.contrato?.empresa || job.original_filename || "Documento"}
-                                                </p>p>
+                                                </p>
                                                 <p className="text-xs text-gray-500 mt-0.5">
                                                   {job.contrato?.periodo && `Periodo: ${job.contrato.periodo} · `}
                                                   {new Date(job.created_at).toLocaleString("pt-BR")}
-                                                </p>p>
-                                  </div>div>
+                                                </p>
+                                  </div>
                                   <div className="flex items-center gap-3">
                                                 <span className={`text-xs font-medium ${statusColor(job.status)}`}>
                                                   {statusLabel(job.status)}
@@ -75,10 +75,10 @@ export default function HistoryTab({ onSelectJob }) {
                                                                       Ver Resultado
                                                     </button>button>
                                                 )}
-                                  </div>div>
-                      </div>div>
+                                  </div>
+                      </div>
                     ))}
-                </div>div>
-          </div>div>
+                </div>
+          </div>
         );
 }</div>
