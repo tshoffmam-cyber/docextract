@@ -161,14 +161,7 @@ export default function App() {
               onClick={() => !item.disabled && setTab(item.id)}
               disabled={item.disabled}
               title={item.label}
-              className={[
-                "flex flex-col items-center gap-1 py-2.5 mx-2 rounded-lg transition-all text-[10px] font-medium border",
-                tab === item.id
-                  ? "bg-blue-600/20 text-blue-400 border-blue-600/30"
-                  : item.disabled
-                    ? "text-gray-800 cursor-not-allowed border-transparent"
-                    : "text-gray-600 hover:text-gray-300 hover:bg-gray-800 border-transparent"
-              ].join(" ")}
+              className={"flex flex-col items-center gap-1 py-2.5 mx-2 rounded-lg transition-all text-[10px] font-medium border " + (tab === item.id ? "bg-blue-600/20 text-blue-400 border-blue-600/30" : item.disabled ? "text-gray-800 cursor-not-allowed border-transparent" : "text-gray-600 hover:text-gray-300 hover:bg-gray-800 border-transparent")}
           >
                   {item.icon}
                               {item.label}
