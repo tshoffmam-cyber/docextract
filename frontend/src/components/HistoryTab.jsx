@@ -47,7 +47,7 @@ export default function HistoryTab({ onSelectJob }) {
   
     return (
           <div className="flex-1 overflow-auto p-6">
-                <h2 className="text-lg font-semibold text-white mb-4">Historico de Analises</h2>h2>
+                <h2 className="text-lg font-semibold text-white mb-4">Historico de Analises</h2>
                 <div className="space-y-2">
                   {list.map((job) => (
                       <div
@@ -66,14 +66,14 @@ export default function HistoryTab({ onSelectJob }) {
                                   <div className="flex items-center gap-3">
                                                 <span className={`text-xs font-medium ${statusColor(job.status)}`}>
                                                   {statusLabel(job.status)}
-                                                </span>span>
+                                                </span>
                                     {job.status === "done" && (
                                                     <button
                                                                         onClick={() => onSelectJob && onSelectJob(job)}
                                                                         className="text-xs btn-primary px-3 py-1"
                                                                       >
                                                                       Ver Resultado
-                                                    </button>button>
+                                                    </button>
                                                 )}
                                   </div>
                       </div>
