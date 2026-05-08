@@ -166,6 +166,7 @@ export default function App() {
                   {item.icon}
                               {item.label}
                                         </button>
+        ))}
         </aside>
 
         {/* Main */}
