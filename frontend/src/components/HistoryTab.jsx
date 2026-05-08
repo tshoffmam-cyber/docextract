@@ -29,8 +29,8 @@ export default function HistoryTab({ onSelectJob }) {
 
   if (loading) return (
         <div className="flex-1 flex items-center justify-center">
-              <p className="text-gray-400">Carregando historico...</p>p>
-        </div>div>
+              <p className="text-gray-400">Carregando historico...</p>
+        </div>
       );
   
     if (error) return (
