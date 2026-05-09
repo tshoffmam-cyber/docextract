@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 import google.generativeai as genai
 
@@ -8,129 +9,186 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_gemini_model = None
+# ---------------------------------------------------------------------------
+# Gemini helpers
+# ---------------------------------------------------------------------------
+
+# Ordered list of models to try — prefer current/stable models first
+GEMINI_MODELS = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+]
 
 
-def _get_gemini():
-    global _gemini_model
-    if _gemini_model is None:
-        genai.configure(api_key=settings.gemini_api_key)
-        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-    return _gemini_model
-
-
-def _build_prompt(text_block: str, fields: list[str], contrato: dict, batch_num: int, total_batches: int) -> str:
-    fields_list = ", ".join(fields) if fields else "todos os campos disponíveis"
-    contrato_info = (
-        f"Contrato: {contrato.get('name', '')}, "
-        f"Cliente: {contrato.get('client', '')}, "
-        f"Edital: {contrato.get('edital', '')}"
-    )
+def _build_prompt(
+        text_block: str,
+        fields: list[str],
+        contrato: dict,
+        batch_num: int,
+        total_batches: int,
+) -> str:
+        fields_list = ", ".join(fields) if fields else "todos os campos disponíveis"
+        contrato_info = (
+            f"Contrato: {contrato.get('name', '')}, "
+            f"Cliente: {contrato.get('client', '')}, "
+            f"Edital: {contrato.get('edital', '')}"
+        )
 
     return f"""Você é um especialista em auditoria de contratos trabalhistas brasileiros.
-Analise o texto extraído do documento abaixo e extraia os dados dos funcionários.
+    Analise o texto extraído do documento abaixo e extraia os dados dos funcionários.
 
-Contexto do contrato: {contrato_info}
-Lote: {batch_num}/{total_batches}
-Campos solicitados: {fields_list}
+    Contexto do contrato: {contrato_info}
+    Lote: {batch_num}/{total_batches}
+    Campos solicitados: {fields_list}
 
-TEXTO DO DOCUMENTO:
-{text_block}
+    TEXTO DO DOCUMENTO:
+    {text_block}
 
-Instruções:
-- Extraia os dados de TODOS os funcionários presentes no texto
-- Para cada campo, indique o status: "Apresentado" (encontrado), "Ausente" (não encontrado) ou "Inconsistente" (valor suspeito)
-- Identifique inconsistências como valores zerados, datas inválidas ou dados faltantes
-- Seja preciso com nomes, CPFs, valores e datas
+    Instruções:
+    - Extraia os dados de TODOS os funcionários presentes no texto
+    - Para cada campo, indique o status: "Apresentado" (encontrado), "Ausente" (não encontrado) ou "Inconsistente" (valor suspeito)
+    - Identifique inconsistências como valores zerados, datas inválidas ou dados faltantes
+    - Seja preciso com nomes, CPFs, valores e datas
 
-Retorne SOMENTE JSON válido neste formato:
-{{
-  "tipo_documento": "holerite|fgts|vt|ponto|aso|outro",
-  "competencia": "MM/AAAA",
-  "empresa": "nome da empresa",
-  "total_funcionarios": 0,
-  "funcionarios": [
+    Retorne SOMENTE JSON válido neste formato:
     {{
-      "nome": "NOME COMPLETO",
-      "campos": {{
-        "campo_nome": {{"valor": "...", "status": "Apresentado"}}
-      }}
-    }}
-  ],
-  "inconsistencias": [
-    {{"funcionario": "nome", "campo": "campo", "descricao": "descrição do problema"}}
-  ],
-  "resumo": "texto resumindo o lote"
+      "tipo_documento": "holerite|fgts|vt|ponto|aso|outro",
+        "competencia": "MM/AAAA",
+          "empresa": "nome da empresa",
+            "total_funcionarios": 0,
+              "funcionarios": [
+                  {{
+                        "nome": "NOME COMPLETO",
+                              "campos": {{
+                                      "campo_nome": {{"valor": "...", "status": "Apresentado"}}
+                                            }}
+                                                }}
+                                                  ],
+                                                    "inconsistencias": [
+                                                        {{"funcionario": "nome", "campo": "campo", "descricao": "descrição do problema"}}
+                                                          ],
+                                                            "resumo": "texto resumindo o lote"
 }}"""
 
 
 def _parse_response(text: str) -> dict:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        return json.loads(match.group())
-    return json.loads(text)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+                    return json.loads(match.group())
+                return json.loads(text)
 
 
-def _call_gemini(text_block: str, prompt: str) -> dict:
-    model = _get_gemini()
-    response = model.generate_content(prompt)
-    return _parse_response(response.text)
+def _call_gemini_with_fallback(prompt: str) -> dict:
+        """Try each Gemini model in order; raise if all fail."""
+    if not settings.gemini_api_key:
+                raise RuntimeError(
+                                "GEMINI_API_KEY não configurada. "
+                                "Defina a variável de ambiente GEMINI_API_KEY no painel do Railway/Hostinger."
+                )
 
+    last_error: Exception | None = None
 
-def _call_gemini_with_fallback(text_block: str, prompt: str) -> dict:
-    """Try Gemini; if quota exceeded, try alternative models."""
-    models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
-    last_error = None
+    for model_name in GEMINI_MODELS:
+                try:
+                                genai.configure(api_key=settings.gemini_api_key)
+                                model = genai.GenerativeModel(model_name)
+                                response = model.generate_content(prompt)
+                                logger.info("IA respondeu com modelo: %s", model_name)
+                                return _parse_response(response.text)
+except Exception as exc:
+            last_error = exc
+            err_str = str(exc)
+            logger.warning("Modelo %s falhou: %s", model_name, err_str)
 
-    for model_name in models_to_try:
-        try:
-            genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            logger.info("Used model: %s", model_name)
-            return _parse_response(response.text)
-        except Exception as e:
-            last_error = e
-            logger.warning("Model %s failed: %s", model_name, e)
+            # Se for cota esgotada (429), espera retry_delay antes de tentar próximo
+            retry_match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", err_str)
+            if retry_match:
+                                wait = min(int(retry_match.group(1)), 10)  # máximo 10 s de espera
+                logger.info("Aguardando %ds antes de tentar próximo modelo…", wait)
+                time.sleep(wait)
+
             continue
 
-    raise Exception(f"All Gemini models failed. Last error: {last_error}")
+    raise Exception(f"Todos os modelos Gemini falharam. Último erro: {last_error}")
 
+
+# ---------------------------------------------------------------------------
+# Fallback para Anthropic Claude (quando Gemini não tem cota)
+# ---------------------------------------------------------------------------
+
+def _call_anthropic_fallback(prompt: str) -> dict:
+        """Use Anthropic Claude as last-resort fallback when Gemini is unavailable."""
+    if not settings.anthropic_api_key:
+                raise RuntimeError("ANTHROPIC_API_KEY também não configurada — sem IA disponível.")
+
+    try:
+                import anthropic
+
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        message = client.messages.create(
+                        model="claude-sonnet-4-5",
+                        max_tokens=4096,
+                        messages=[{"role": "user", "content": prompt}],
+        )
+        text = message.content[0].text
+        logger.info("Resposta obtida via Anthropic Claude (fallback)")
+        return _parse_response(text)
+except Exception as exc:
+        raise Exception(f"Anthropic Claude também falhou: {exc}") from exc
+
+
+def _call_ai(prompt: str) -> dict:
+        """Call Gemini first; if all Gemini models fail, fall back to Anthropic."""
+    try:
+                return _call_gemini_with_fallback(prompt)
+except Exception as gemini_exc:
+        logger.warning("Gemini indisponível (%s). Tentando Anthropic…", gemini_exc)
+        try:
+                        return _call_anthropic_fallback(prompt)
+except Exception as anthropic_exc:
+            raise Exception(
+                                f"Nenhuma IA disponível. "
+                                f"Gemini: {gemini_exc} | Anthropic: {anthropic_exc}"
+            ) from anthropic_exc
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def extract_from_pages(
-    pages: list[dict],
-    fields: list[str],
-    contrato: dict,
-    batch_size: int = 20,
+        pages: list[dict],
+        fields: list[str],
+        contrato: dict,
+        batch_size: int = 20,
 ) -> list[dict]:
-    """
-    Extract structured data from text pages using Gemini.
-    pages: list of {page, text, method} dicts from pdf_processor.extract_text_from_pdf()
-    """
+        """
+            Extract structured data from text pages using AI (Gemini → Anthropic fallback).
+                pages: list of {page, text, method} dicts from pdf_processor.extract_text_from_pdf()
+                    """
     from app.workers.pdf_processor import pages_to_text_block
 
     results = []
-    # Filter out empty pages
     non_empty = [p for p in pages if p.get("text")]
 
     if not non_empty:
-        logger.warning("No text pages to process — all pages were empty")
-        return results
+                logger.warning("Nenhuma página com texto para processar — todas estavam vazias")
+                return results
 
-    # Split into batches to avoid token limits
-    batches = [non_empty[i:i + batch_size] for i in range(0, len(non_empty), batch_size)]
+    batches = [non_empty[i : i + batch_size] for i in range(0, len(non_empty), batch_size)]
     total_batches = len(batches)
 
     for batch_num, batch_pages in enumerate(batches, start=1):
-        text_block = pages_to_text_block(batch_pages)
-        prompt = _build_prompt(text_block, fields, contrato, batch_num, total_batches)
+                text_block = pages_to_text_block(batch_pages)
+                prompt = _build_prompt(text_block, fields, contrato, batch_num, total_batches)
 
         try:
-            result = _call_gemini_with_fallback(text_block, prompt)
-            results.append(result)
-            logger.info("Batch %d/%d extracted successfully", batch_num, total_batches)
-        except Exception as e:
-            logger.error("Batch %d/%d failed: %s", batch_num, total_batches, e)
-            results.append({"error": str(e), "batch": batch_num})
+                        result = _call_ai(prompt)
+                        results.append(result)
+                        logger.info("Lote %d/%d extraído com sucesso", batch_num, total_batches)
+except Exception as exc:
+            logger.error("Lote %d/%d falhou: %s", batch_num, total_batches, exc)
+            results.append({"error": str(exc), "batch": batch_num})
 
     return results
