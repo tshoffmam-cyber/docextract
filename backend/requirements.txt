@@ -9,7 +9,10 @@ pymupdf==1.24.11
 Pillow==10.4.0
 opencv-python-headless==4.10.0.84
 deskew==1.5.1
+# IA — Anthropic Claude (fallback quando Gemini sem cota)
 anthropic>=0.40.0
+# IA — Google Gemini (primario); >=0.8.3 suporta gemini-2.0-flash
+google-generativeai>=0.8.3
 google-api-python-client==2.149.0
 google-auth-oauthlib==1.2.1
 boto3==1.35.0
@@ -21,6 +24,5 @@ httpx==0.27.0
 pydantic-settings==2.5.2
 pytest==8.3.0
 pytest-asyncio==0.24.0
-google-generativeai==0.8.3
 psycopg2-binary==2.9.9
 email-validator>=2.0.0
