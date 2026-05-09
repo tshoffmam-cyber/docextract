@@ -1,52 +1,47 @@
-import base64
 import json
 import logging
 import re
 
-import anthropic
 import google.generativeai as genai
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_anthropic_client = None
 _gemini_model = None
-
-
-def _get_anthropic():
-    global _anthropic_client
-    if _anthropic_client is None:
-        _anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    return _anthropic_client
 
 
 def _get_gemini():
     global _gemini_model
     if _gemini_model is None:
         genai.configure(api_key=settings.gemini_api_key)
-        _gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
     return _gemini_model
 
 
-def _build_prompt(fields: list[str], contrato: dict, batch_num: int, total_batches: int) -> str:
+def _build_prompt(text_block: str, fields: list[str], contrato: dict, batch_num: int, total_batches: int) -> str:
     fields_list = ", ".join(fields) if fields else "todos os campos disponíveis"
     contrato_info = (
         f"Contrato: {contrato.get('name', '')}, "
         f"Cliente: {contrato.get('client', '')}, "
         f"Edital: {contrato.get('edital', '')}"
-    ) if contrato else ""
-    return f"""Você é um auditor especialista em documentação trabalhista brasileira.
-{contrato_info}
-Lote {batch_num}/{total_batches}. Analise as imagens e extraia dados de TODOS os funcionários visíveis.
+    )
 
-Campos a extrair por funcionário: {fields_list}
+    return f"""Você é um especialista em auditoria de contratos trabalhistas brasileiros.
+Analise o texto extraído do documento abaixo e extraia os dados dos funcionários.
 
-Para cada campo use os status:
-- "Apresentado" → documento/valor presente e correto
-- "Não apresentado" → deveria existir mas está ausente
-- "Não consta" → campo inexistente neste tipo de documento
-- "Inconsistente" → divergência ou valor suspeito
+Contexto do contrato: {contrato_info}
+Lote: {batch_num}/{total_batches}
+Campos solicitados: {fields_list}
+
+TEXTO DO DOCUMENTO:
+{text_block}
+
+Instruções:
+- Extraia os dados de TODOS os funcionários presentes no texto
+- Para cada campo, indique o status: "Apresentado" (encontrado), "Ausente" (não encontrado) ou "Inconsistente" (valor suspeito)
+- Identifique inconsistências como valores zerados, datas inválidas ou dados faltantes
+- Seja preciso com nomes, CPFs, valores e datas
 
 Retorne SOMENTE JSON válido neste formato:
 {{
@@ -76,111 +71,66 @@ def _parse_response(text: str) -> dict:
     return json.loads(text)
 
 
-def _call_gemini(batch_b64: list[str], prompt: str) -> dict:
-    import PIL.Image
-    from io import BytesIO
-
+def _call_gemini(text_block: str, prompt: str) -> dict:
     model = _get_gemini()
-    parts = []
-    for b64 in batch_b64:
-        img = PIL.Image.open(BytesIO(base64.b64decode(b64)))
-        parts.append(img)
-    parts.append(prompt)
-
-    response = model.generate_content(parts)
+    response = model.generate_content(prompt)
     return _parse_response(response.text)
 
 
-def _call_anthropic(batch_b64: list[str], prompt: str) -> dict:
-    content = []
-    for b64 in batch_b64:
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
-        })
-    content.append({"type": "text", "text": prompt})
+def _call_gemini_with_fallback(text_block: str, prompt: str) -> dict:
+    """Try Gemini; if quota exceeded, try alternative models."""
+    models_to_try = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]
+    last_error = None
 
-    response = _get_anthropic().messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": content}],
-    )
-    return _parse_response(response.content[0].text)
-
-
-def _call_with_fallback(batch_b64: list[str], prompt: str, batch_idx: int) -> dict:
-    if settings.gemini_api_key:
+    for model_name in models_to_try:
         try:
-            result = _call_gemini(batch_b64, prompt)
-            logger.info("Batch %d: Gemini OK", batch_idx)
-            return result
+            genai.configure(api_key=settings.gemini_api_key)
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            logger.info("Used model: %s", model_name)
+            return _parse_response(response.text)
         except Exception as e:
-            logger.warning("Batch %d: Gemini falhou (%s), usando Anthropic", batch_idx, e)
-
-    if settings.anthropic_api_key:
-        result = _call_anthropic(batch_b64, prompt)
-        logger.info("Batch %d: Anthropic OK", batch_idx)
-        return result
-
-    raise RuntimeError("Nenhuma chave de IA configurada (GEMINI_API_KEY ou ANTHROPIC_API_KEY)")
-
-
-def deduplicate_employees(employees: list[dict]) -> list[dict]:
-    merged: dict[str, dict] = {}
-    for emp in employees:
-        key = emp.get("nome", "").strip().upper()
-        if not key:
+            last_error = e
+            logger.warning("Model %s failed: %s", model_name, e)
             continue
-        if key not in merged:
-            merged[key] = emp
-        else:
-            existing_campos = merged[key].get("campos", {})
-            for campo, data in emp.get("campos", {}).items():
-                if campo not in existing_campos:
-                    existing_campos[campo] = data
-                elif existing_campos[campo].get("status") == "Não consta" and data.get("status") != "Não consta":
-                    existing_campos[campo] = data
-            merged[key]["campos"] = existing_campos
-    return list(merged.values())
+
+    raise Exception(f"All Gemini models failed. Last error: {last_error}")
 
 
-def extract_from_pages(pages_b64: list[str], fields: list[str], contrato: dict) -> dict:
-    batch_size = settings.batch_size
-    batches = [pages_b64[i : i + batch_size] for i in range(0, len(pages_b64), batch_size)]
+def extract_from_pages(
+    pages: list[dict],
+    fields: list[str],
+    contrato: dict,
+    batch_size: int = 20,
+) -> list[dict]:
+    """
+    Extract structured data from text pages using Gemini.
+    pages: list of {page, text, method} dicts from pdf_processor.extract_text_from_pdf()
+    """
+    from app.workers.pdf_processor import pages_to_text_block
+
+    results = []
+    # Filter out empty pages
+    non_empty = [p for p in pages if p.get("text")]
+
+    if not non_empty:
+        logger.warning("No text pages to process — all pages were empty")
+        return results
+
+    # Split into batches to avoid token limits
+    batches = [non_empty[i:i + batch_size] for i in range(0, len(non_empty), batch_size)]
     total_batches = len(batches)
 
-    all_employees: list[dict] = []
-    all_inconsistencies: list[dict] = []
-    tipo_documento = ""
-    competencia = ""
-    empresa = ""
-    resumos: list[str] = []
+    for batch_num, batch_pages in enumerate(batches, start=1):
+        text_block = pages_to_text_block(batch_pages)
+        prompt = _build_prompt(text_block, fields, contrato, batch_num, total_batches)
 
-    for idx, batch in enumerate(batches, start=1):
-        prompt = _build_prompt(fields, contrato, idx, total_batches)
         try:
-            parsed = _call_with_fallback(batch, prompt, idx)
-            all_employees.extend(parsed.get("funcionarios", []))
-            all_inconsistencies.extend(parsed.get("inconsistencias", []))
-            if not tipo_documento:
-                tipo_documento = parsed.get("tipo_documento", "")
-            if not competencia:
-                competencia = parsed.get("competencia", "")
-            if not empresa:
-                empresa = parsed.get("empresa", "")
-            if parsed.get("resumo"):
-                resumos.append(parsed["resumo"])
+            result = _call_gemini_with_fallback(text_block, prompt)
+            results.append(result)
+            logger.info("Batch %d/%d extracted successfully", batch_num, total_batches)
         except Exception as e:
-            logger.error("Batch %d/%d falhou: %s", idx, total_batches, e)
-            continue
+            logger.error("Batch %d/%d failed: %s", batch_num, total_batches, e)
+            results.append({"error": str(e), "batch": batch_num})
 
-    deduped = deduplicate_employees(all_employees)
-    return {
-        "tipo_documento": tipo_documento,
-        "competencia": competencia,
-        "empresa": empresa,
-        "total_funcionarios": len(deduped),
-        "funcionarios": deduped,
-        "inconsistencias": all_inconsistencies,
-        "resumo": " | ".join(resumos),
-    }
+    return results
