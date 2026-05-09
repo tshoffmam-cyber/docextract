@@ -1,13 +1,11 @@
-import base64
 import logging
-from io import BytesIO
 
 import fitz  # PyMuPDF
-from PIL import Image, ImageEnhance, ImageFilter
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Minimum characters per page to consider it has native text
+_MIN_TEXT_CHARS = 50
 
 
 def get_pdf_page_count(pdf_bytes: bytes) -> int:
@@ -15,43 +13,71 @@ def get_pdf_page_count(pdf_bytes: bytes) -> int:
         return len(doc)
 
 
-def compress_and_prepare_pdf(pdf_bytes: bytes) -> list[str]:
-    pages_b64: list[str] = []
-    matrix = fitz.Matrix(200 / 72, 200 / 72)
+def extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = 100) -> list[dict]:
+    """
+    Extract text from each PDF page.
+    - Native text (digital PDF): extracted directly (free, fast, ~10x fewer tokens).
+    - Scanned/image-only page: OCR with Tesseract locally (free, no API cost).
+
+    Returns list of dicts: [{page, text, method}]
+    """
+    pages = []
 
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        total = min(len(doc), settings.max_pdf_pages)
+        total = min(len(doc), max_pages)
         for page_num in range(total):
-            try:
-                page = doc[page_num]
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
+            page = doc[page_num]
 
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                gray = img.convert("L")
+            # 1. Try native text extraction (instant, zero cost)
+            text = page.get_text("text").strip()
 
-                # Deskew if needed
-                try:
-                    from deskew import determine_skew
-                    import numpy as np
+            if len(text) >= _MIN_TEXT_CHARS:
+                pages.append({"page": page_num + 1, "text": text, "method": "native"})
+                logger.debug("Page %d: native text (%d chars)", page_num + 1, len(text))
+            else:
+                # 2. Fallback: local Tesseract OCR (free, runs on VPS)
+                ocr_text = _ocr_page(page)
+                if ocr_text:
+                    pages.append({"page": page_num + 1, "text": ocr_text, "method": "ocr"})
+                    logger.debug("Page %d: OCR (%d chars)", page_num + 1, len(ocr_text))
+                else:
+                    pages.append({"page": page_num + 1, "text": "", "method": "empty"})
+                    logger.warning("Page %d: no text found", page_num + 1)
 
-                    gray_arr = np.array(gray)
-                    angle = determine_skew(gray_arr)
-                    if angle is not None and abs(angle) > 0.5:
-                        gray = gray.rotate(angle, expand=True, fillcolor=255)
-                except Exception as e:
-                    logger.debug("Deskew skipped for page %d: %s", page_num, e)
+    return pages
 
-                gray = ImageEnhance.Contrast(gray).enhance(1.8)
-                gray = ImageEnhance.Sharpness(gray).enhance(2.0)
-                gray = gray.filter(ImageFilter.SHARPEN)
 
-                rgb = gray.convert("RGB")
-                buf = BytesIO()
-                rgb.save(buf, format="JPEG", quality=85, optimize=True)
-                pages_b64.append(base64.b64encode(buf.getvalue()).decode())
+def _ocr_page(page) -> str:
+    """Run Tesseract OCR on a single page. Returns extracted text or empty string."""
+    try:
+        import pytesseract
+        from PIL import Image
+        from io import BytesIO
 
-            except Exception as e:
-                logger.error("Failed to process page %d: %s", page_num, e)
-                continue
+        matrix = fitz.Matrix(200 / 72, 200 / 72)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples).convert("L")
+        text = pytesseract.image_to_string(img, lang="por+eng", config="--psm 6")
+        return text.strip()
 
-    return pages_b64
+    except ImportError:
+        logger.warning("pytesseract not installed. Run: pip install pytesseract")
+        return ""
+    except Exception as e:
+        logger.error("OCR error: %s", e)
+        return ""
+
+
+def pages_to_text_block(pages: list[dict]) -> str:
+    """Join all page texts into one clean block for the AI prompt."""
+    parts = []
+    for p in pages:
+        if p["text"]:
+            parts.append(f"=== PAGINA {p['page']} ===\n{p['text']}")
+    return "\n\n".join(parts)
+
+
+# Backward-compat alias used in tasks.py (returns text pages, not images)
+def compress_and_prepare_pdf(pdf_bytes: bytes) -> list[dict]:
+    from app.config import settings
+    return extract_text_from_pdf(pdf_bytes, max_pages=settings.max_pdf_pages)
